@@ -10,7 +10,7 @@
     <script src="//cdn.socket.io/socket.io-1.3.5.js"></script>
     <script>
         var socket = io();
-        var user = <%- JSON.stringify(user) %>;
+        var userId = <%- JSON.stringify(userId) %>;
         var timeToresentRequest = 3000;
 
         socket.on("message", function (data) {
@@ -24,7 +24,7 @@
         setTimeout(resentRequest, 1);        
 
         function resentRequest() {
-            socket.emit("i-am-online", {user: user});
+            socket.emit("i-am-online", {userId: userId});
             setTimeout(resentRequest, timeToresentRequest);
         }
 
@@ -39,7 +39,8 @@
         function refreshOnlines(users) {
             $(".online-list").html("");
             $.each(users, function(i, user) {
-                $(".online-list").append(user.username +'<hr/>');
+                // $(".online-list").append(user.username +'<hr/>');
+                $(".online-list").append(users[i] +'<hr/>');
             });
         }
 
@@ -72,8 +73,8 @@
                 $container = $('.media-list');
                 $container[0].scrollTop = $container[0].scrollHeight;
                 var message = $("#messageText").val();
-                var user = <%- JSON.stringify(user) %>;
-                $.post( "/messages", {message: message, user: user}, function( data ) {
+                var user = <%- JSON.stringify(userId) %>;
+                $.post( "/messages", {message: message, userId: userId}, function( data ) {
                     $("#messageText").val("")
                 });
                 $container.animate({ scrollTop: $container[0].scrollHeight }, "slow");
@@ -103,6 +104,7 @@
 <div class="container">
     <div class="row " style="padding-top:40px;">
         <a href="/logout" class="btn btn-default btn-sm">Logout</a>
+        <a href="/" class="btn btn-default btn-sm">Home</a>
         <a href="/profile" class="btn btn-default btn-sm">Profile</a>
         <h3 class="text-center">Realtime Chat Application with NodeJS, SocketIO, Expression, and MongoDB </h3>
         <br/><br/>

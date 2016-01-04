@@ -1,6 +1,7 @@
 var Message = require('./models/message');
 var User = require('./models/user');
 var Online = require('./models/online');
+var Counter = require('./models/counter');
 var mongoose = require('mongoose');
 var _ = require('underscore');
 var async = require('async');
@@ -8,11 +9,13 @@ var dateFormat = require('dateformat');
 
 var sessionTime = 10000; // 10 seconds
 
+var usersOnline = [];
+
 module.exports = function(app, passport, io) {
 	
 	// home page
-	app.get('/', function(req, res) {
-		res.render('index.ejs');
+	app.get('/', isLoggedIn, function(req, res) {
+		res.render('index.ejs', {user: req.user});
 	});
 
 	// login page
@@ -64,35 +67,19 @@ module.exports = function(app, passport, io) {
 
 	// chat page
 	app.get('/chat', isLoggedIn, function(req, res) {
-		console.log(req.user.username + " redirected to chat page");
 		var user = req.body.user;
-		if (user){
-			console.log("test req.body.user: "+user.username)
-		}
-		res.render('chat.ejs', { user: req.user });
+		// if (user){
+		// 	console.log("test req.body.user: "+user.username)
+		// }
+		res.render('chat.ejs', { userId: req.user._id });
 	});
 
 	// process message which sent from the client
 	app.post('/messages', function(req, res, next) {
 		var message = req.body.message;
-		var user = req.body.user;
-		console.log("message: "+message+" user: "+JSON.stringify(user));
-		var messageModel = new Message();
-		messageModel.user_id = user._id;
-		messageModel.content = message;
-		messageModel.save(function(err, result) {
-			if (!err) {
-				Message.find({}).sort('-create_at').exec(function(err, messages) {
-					findUserMessage(messages, function(data) {
-						io.emit('message', { messages: data });
-					});
-					io.emit('message', {messages: messages, user: user});			
-				});
-				res.send("Message Sent!");
-			} else {
-				res.send("some errors occured!");
-			}
-		});
+		var userId = req.body.userId;
+		createMessage(userId, message, res, next);
+		
 	});
 
 	// get all messages from the database
@@ -118,26 +105,38 @@ module.exports = function(app, passport, io) {
 		var timeOutId = 0;
 
 		socket.on("i-am-online", function(data) {
-			console.log("user online "+JSON.stringify(data));
 			if (data) {
-				user = data.user;
-				console.log("isOnline: "+isOnline);
+				userId = data.userId;
+				User.findById(userId, function(err, user) {
+					if (err) return callback(err);
+					if (user) {
+						if (!isOnline) {
+							var index = usersOnline.indexOf(user.username);
+							if (index <= -1) {
+								usersOnline.push(user.username);
+							}
+							io.emit("onlines", usersOnline);
+							// isOnline = true;
+							// setUserOnline(user);
+						}
 
-				if (!isOnline) {
-					isOnline = true;
-					setUserOnline(user);
-				}
+						if (timeOutId) {
+							clearTimeout(timeOutId);
+							timeOutId = 0;
+						} 
 
-				if (timeOutId) {
-					clearTimeout(timeOutId);
-					timeOutId = 0;
-				} 
-
-				timeOutId = setTimeout(function() {
-					setUserOffline(user);
-					isOnline = false;
-				}, sessionTime);
-				
+						timeOutId = setTimeout(function() {
+							var index = usersOnline.indexOf(user.username);
+							if (index > -1) {
+								usersOnline.splice(index, 1);
+							}
+							io.emit("onlines", usersOnline);
+							// setUserOffline(user);
+							// isOnline = false;
+						}, sessionTime);
+						console.log("test usersOnline: "+usersOnline);
+					}
+				});
 			}
 		});
 	});
@@ -167,13 +166,14 @@ module.exports = function(app, passport, io) {
 		var allMessages = [];
 
 		async.eachSeries(messages, function iterator(elt, cb) {
-			var user_id = mongoose.Types.ObjectId(elt.user_id);
+			// var user_id = mongoose.Types.ObjectId(elt.user_id);
+			var user_id = elt.user_id;
 			message = JSON.parse(JSON.stringify(elt));
 
 			var date = dateFormat(message.create_at, "dddd, mmmm dS, yyyy, h:MM:ss TT");
 			message.dateFomat = date;
 			User.findById(user_id, function(err, user) {
-				if (err) return next(err);
+				if (err) return callback(err);
 				message.username = user.username;
 				allMessages.push(message);
 				cb();
@@ -212,4 +212,64 @@ module.exports = function(app, passport, io) {
 	function setUserOffline(user) {
 		setUserStatus(user, false);
 	}
+
+	function createMessage(userId, content, res, callback) {
+		User.findById(userId, function(err, user) {
+			if (err) throw err;
+			if (user) {
+				initCounter(function() {
+					getNextSequence("messageId", function(counter) {
+						var messageModel = new Message();
+						messageModel._id = counter.seq;
+						messageModel.user_id = userId;
+						messageModel.content = content;
+						messageModel.save(function(err, result) {
+							if (!err) {
+								Message.find({}).sort('-create_at').exec(function(err, messages) {
+									findUserMessage(messages, function(data) {
+										io.emit('message', { messages: data });
+									});			
+								});
+								res.send("Message Sent!");
+							} else {
+								res.send("some errors occured!");
+							}
+						});
+					});
+				});
+			}
+		});
+	}
+
+	// if the counter is not exist, we will create a counter
+	function initCounter(callback) {
+		Counter.findOne({'_id': 'messageId'}, function(err, done) {
+			if (err) throw err;
+			if (!done) {
+				var messageCounter = new Counter();
+				messageCounter._id = "messageId";
+				messageCounter.seq = 0;
+				messageCounter.save(function(err) {
+					if (err) throw err;
+					callback();
+				});
+			} else {
+				callback();
+			}
+		});
+	}
+
+	function getNextSequence(name, callback) {
+		Counter.findOneAndUpdate(
+			{ _id: name },
+			{ $inc: { seq: 1 } },
+			{ new: true, upsert: true },
+			function(err, done) {
+				if (err) throw err;
+				if (done) {
+					callback(done);
+				}
+			}
+		);
+	}	
 };

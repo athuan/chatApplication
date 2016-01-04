@@ -2,7 +2,8 @@ var mongoose = require('mongoose');
 
 // create table message
 var Message = new mongoose.Schema({
-	user_id: String,
+	_id: Number,
+	user_id: Number,
 	content: String,
 	create_at: {
 		type: Date,
